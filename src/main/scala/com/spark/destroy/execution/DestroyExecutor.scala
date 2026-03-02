@@ -7,14 +7,47 @@ import org.apache.spark.sql.SparkSession
 import org.slf4j.LoggerFactory
 
 /**
- * 테이블별 파기 파이프라인 오케스트레이션.
+ * 단일 테이블에 대한 파기 파이프라인을 오케스트레이션하는 실행기.
  *
- * 흐름: 컬럼 조회 → 백업 생성 → [파티션 반복] → 엔진 전환 → 파기 쿼리 → 건수 검증
+ * [[com.spark.destroy.DestroyPipeline]]이 테이블 목록을 반복하면서 각 테이블마다
+ * 이 클래스의 `execute()`를 호출한다.
+ *
+ * 파티션 전략에 따른 실행 흐름:
+ *
+ * '''Monthly / Daily (파티션 반복):'''
+ * {{{
+ *   1. 컬럼 목록 조회 (SELECT * LIMIT 0)
+ *   2. 백업 테이블 생성 (DROP → CREATE LIKE → UNSET EXTERNAL)
+ *   3. 파티션 목록 조회 → 날짜 필터링 → 내림차순 반복:
+ *      a. COUNT 조회 (엔진: Daily→built-in ORC, Monthly→Hive SerDe)
+ *      b. 엔진 전환 (건수 기반: setConvertMetastoreOrc)
+ *      c. 백업 INSERT
+ *      d. TempView 생성 (MultiColumnDate 패턴만)
+ *      e. 힌트 생성 (REPARTITION + BROADCAST)
+ *      f. 파기 쿼리 실행 (INSERT OVERWRITE + LEFT OUTER JOIN)
+ *      g. 파기 후 건수 검증
+ * }}}
+ *
+ * '''FullPartition / NonPartition (일괄 처리):'''
+ * {{{
+ *   1. 컬럼 목록 조회 → 백업 테이블 생성 → 전체 COUNT
+ *   2. 백업 INSERT → 힌트 생성 → 파기 쿼리 실행 → 건수 검증
+ * }}}
+ *
+ * @param spark    Hive 지원이 활성화된 SparkSession
+ * @param config   파이프라인 설정
+ * @param callback 생명주기 콜백 (감사 로깅, 진행 추적 등)
  */
 class DestroyExecutor(spark: SparkSession, config: DestroyConfig,
                       callback: DestroyCallback) {
   private val log = LoggerFactory.getLogger(getClass)
 
+  /**
+   * 단일 테이블의 파기 파이프라인을 실행한다.
+   *
+   * 파티션 전략에 따라 내부적으로 `executePartitioned`, `executeFullPartition`,
+   * `executeNonPartition` 중 하나를 호출한다.
+   */
   def execute(target: TableTarget): Unit = {
     callback.onTableStart(target.database, target.table)
     val srcFull = s"${target.database}.${target.table}"
