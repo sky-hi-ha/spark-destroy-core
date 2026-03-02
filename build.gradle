@@ -1,0 +1,27 @@
+plugins {
+    id 'scala'
+}
+
+group = 'com.spark'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation "org.scala-lang:scala-library:${scalaVersion}"
+
+    compileOnly "org.apache.spark:spark-sql_${scalaBinaryVersion}:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-hive_${scalaBinaryVersion}:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-catalyst_${scalaBinaryVersion}:${sparkVersion}"
+    compileOnly "org.slf4j:slf4j-api:1.7.36"
+
+    testImplementation "org.scalatest:scalatest_${scalaBinaryVersion}:3.2.15"
+    testImplementation "org.apache.spark:spark-sql_${scalaBinaryVersion}:${sparkVersion}"
+    testImplementation "org.apache.spark:spark-hive_${scalaBinaryVersion}:${sparkVersion}"
+}
+
+tasks.withType(ScalaCompile) {
+    scalaCompileOptions.additionalParameters = ['-feature', '-unchecked', '-deprecation']
+}
